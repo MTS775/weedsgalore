@@ -76,6 +76,8 @@ From the repository root, launch Streamlit through that same Python interpreter:
 python -m streamlit run src/streamlit_app.py
 ```
 
+On Windows, you can start the app by double-clicking `exec_weedsgalore.bat` in the repository root.
+
 Using `python -m streamlit` ensures the app runs under the active environment, where PyTorch is installed. The command above installs the CPU build; for CUDA, install the matching PyTorch/CUDA build using the [official PyTorch selector](https://pytorch.org/get-started/locally/) instead.
 
 In the sidebar, select the RGB or MSI model and matching checkpoint. Choose a local dataset directory, or upload one date folder (including its `images` directory and optional `semantics` directory) or a ZIP archive. The pretrained checkpoints can be selected from `ckpts/`.
