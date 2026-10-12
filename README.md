@@ -59,6 +59,27 @@ Run the evaluation script, replacing the flags with your paths and parameters:
 python src/evaluate.py --dataset_path <weedsgalore-dataset_directory> --split test --ckpt <ckpt_directory> --in_channels 5 --num_classes 6
 ```
 
+### Interactive Streamlit interface
+
+The interface segments a selected date as a parcel, displays the input tiles and their predictions, and reports class proportions and (when semantic masks are present) IoU/mIoU. Tiles are arranged by identifier in a visual grid; the dataset does not provide tile coordinates, so this grid is not a georeferenced orthomosaic.
+
+The original evaluation environment uses Python 3.7, which is too old for the Streamlit version required for directory uploads. Create a separate Python 3.10 environment with PyTorch, Streamlit, and the app dependencies installed together:
+```
+conda create -n weedsgalore-streamlit python=3.10 -y
+conda activate weedsgalore-streamlit
+conda install pytorch==1.13.1 torchvision==0.14.1 cpuonly -c pytorch -y
+python -m pip install -r requirements-streamlit.txt
+```
+
+From the repository root, launch Streamlit through that same Python interpreter:
+```
+python -m streamlit run src/streamlit_app.py
+```
+
+Using `python -m streamlit` ensures the app runs under the active environment, where PyTorch is installed. The command above installs the CPU build; for CUDA, install the matching PyTorch/CUDA build using the [official PyTorch selector](https://pytorch.org/get-started/locally/) instead.
+
+In the sidebar, select the RGB or MSI model and matching checkpoint. Choose a local dataset directory, or upload one date folder (including its `images` directory and optional `semantics` directory) or a ZIP archive. The pretrained checkpoints can be selected from `ckpts/`.
+
 Inference with probabilistic model:
 ```
 python src/evaluate_vimc.py --dataset_path <weedsgalore-dataset_directory> --split test --ckpt <ckpt_directory> --in_channels 5 --num_classes 3 --mc_samples=5
