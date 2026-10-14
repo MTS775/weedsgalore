@@ -3,6 +3,7 @@
 
 import csv
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ if str(SOURCE_ROOT) not in sys.path:
 
 from nets import deeplabv3plus_resnet50
 from parcel_utils import (
+    combine_parcels,
     index_directory,
     index_parcel_files,
     index_zip,
@@ -28,6 +30,9 @@ from parcel_utils import (
     scores_from_confusion,
     update_confusion,
 )
+from project_paths import list_dataset_subdirectories, resolve_project_path
+from connexion_streamlit import render_authentication
+from gestion_utilisateurs import render_user_management
 
 
 st.set_page_config(
@@ -36,6 +41,19 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+current_user = render_authentication()
+if current_user is None:
+    st.stop()
+if current_user["role"] == "admin":
+    selected_page = st.sidebar.radio(
+        "Navigation",
+        ["Analyse de parcelle", "Gestion des utilisateurs"],
+        key="main-navigation",
+    )
+    if selected_page == "Gestion des utilisateurs":
+        render_user_management(current_user)
+        st.stop()
 
 CLASS_COLORS = np.asarray(
     [
@@ -208,7 +226,8 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] .st-key-checkpoint-path input,
-    [data-testid="stSidebar"] .st-key-dataset-path input {
+    [data-testid="stSidebar"] .st-key-dataset-path input,
+    [data-testid="stSidebar"] .st-key-dataset-subfolder input[role="combobox"] {
         color: __TEXT_COLOR__ !important;
         -webkit-text-fill-color: __TEXT_COLOR__ !important;
         caret-color: __TEXT_COLOR__ !important;
@@ -425,8 +444,12 @@ band_names = ["R", "G", "B", "NIR", "RE"] if input_channels == 5 else ["R", "G",
 class_option = st.sidebar.radio("🏷️ Classes prédites", ["Multi-classes · 6", "Adventices · 3"])
 num_classes = 6 if class_option.endswith("6") else 3
 checkpoint_variant = "msi" if input_channels == 5 else "rgb"
-checkpoint_default = PROJECT_ROOT / "ckpts" / "dlv3p_{}_{}.pth".format(
-    checkpoint_variant, num_classes
+checkpoint_default = resolve_project_path(
+    os.environ.get(
+        "WEEDSGALORE_CHECKPOINT",
+        PROJECT_ROOT / "ckpts" / "dlv3p_{}_{}.pth".format(checkpoint_variant, num_classes),
+    ),
+    PROJECT_ROOT,
 )
 previous_checkpoint_default = st.session_state.get("_checkpoint_default")
 current_checkpoint_path = st.session_state.get("checkpoint-path")
@@ -434,7 +457,9 @@ if current_checkpoint_path is None or current_checkpoint_path == previous_checkp
     st.session_state["checkpoint-path"] = str(checkpoint_default)
 st.session_state["_checkpoint_default"] = str(checkpoint_default)
 checkpoint_path = st.sidebar.text_input(
-    "📁 Fichier du modèle (.pth)", key="checkpoint-path"
+    "📁 Fichier du modèle (.pth)",
+    help="Chemin absolu ou relatif à la racine du projet. Variable possible : WEEDSGALORE_CHECKPOINT.",
+    key="checkpoint-path",
 )
 grid_columns = st.sidebar.slider(
     "📐 Tuiles par ligne (grille)", min_value=2, max_value=8, value=4,
@@ -448,18 +473,45 @@ ignored_files = []
 source_identity = ""
 
 if source_mode == "Dossier local":
+    dataset_default = resolve_project_path(
+        os.environ.get("WEEDSGALORE_DATASET", PROJECT_ROOT / "weedsgalore-dataset"),
+        PROJECT_ROOT,
+    )
     dataset_path = st.sidebar.text_input(
         "📂 Chemin du dossier dataset",
-        value=str(PROJECT_ROOT / "weedsgalore-dataset"),
-        help="Choisissez la racine contenant les dossiers de dates, ou un dossier images/semantics.",
+        value=str(dataset_default),
+        help=(
+            "Chemin absolu ou relatif à la racine du projet. Modifiable pour utiliser un autre "
+            "dossier, par exemple C:\\baseTeste. Variable possible : WEEDSGALORE_DATASET."
+        ),
         key="dataset-path",
     )
-    dataset_root = Path(dataset_path).expanduser()
+    dataset_root = resolve_project_path(dataset_path, PROJECT_ROOT)
     if dataset_root.is_dir():
-        parcels, ignored_files = index_directory(str(dataset_root))
-        source_identity = str(dataset_root.resolve())
+        dataset_folders = [str(dataset_root)] + [
+            str(path) for path in list_dataset_subdirectories(dataset_root)
+        ]
+        if st.session_state.get("dataset-subfolder") not in dataset_folders:
+            st.session_state["dataset-subfolder"] = dataset_folders[0]
+        selected_folder = st.sidebar.selectbox(
+            "📁 Sélectionner le sous-dossier",
+            options=dataset_folders,
+            format_func=lambda path: (
+                "Racine complète du dataset"
+                if Path(path) == dataset_root
+                else str(Path(path).relative_to(dataset_root))
+            ),
+            key="dataset-subfolder",
+            help="Sélectionnez le dossier dont toutes les parcelles seront analysées.",
+        )
+        selected_dataset_root = Path(selected_folder)
+        parcels, ignored_files = index_directory(str(selected_dataset_root))
+        source_identity = str(selected_dataset_root.resolve())
     else:
-        st.info("Saisissez le chemin d’un dossier existant sur la machine qui exécute Streamlit.")
+        st.info(
+            "Saisissez le chemin d’un dossier existant sur la machine qui exécute Streamlit. "
+            "Les chemins relatifs partent de la racine du projet."
+        )
 else:
     supports_directory = parse_version(st.__version__) >= parse_version("1.46.0")
     if supports_directory:
@@ -506,16 +558,8 @@ if not parcels:
     )
     st.stop()
 
-# --- NOMMAGE EXPLICITE DES PARCELLES ---
-dates = sorted(parcels)
-parcel_options = {f"Parcelle CSS · {date}": date for date in dates}
-selected_parcel_label = st.sidebar.selectbox(
-    "🌾 Sélectionner la parcelle",
-    list(parcel_options.keys()),
-    key="parcel-selector",
-)
-selected_date = parcel_options[selected_parcel_label]
-parcel = parcels[selected_date]
+parcel = combine_parcels(parcels)
+selected_folder_name = Path(source_identity).name or "dataset"
 
 available_tiles = sum(
     all(band in tile["bands"] for band in band_names) for tile in parcel.values()
@@ -533,7 +577,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-checkpoint = Path(checkpoint_path).expanduser()
+checkpoint = resolve_project_path(checkpoint_path, PROJECT_ROOT)
 checkpoint_exists = checkpoint.is_file()
 if not checkpoint_exists:
     st.warning("⚠️ Modèle introuvable : vérifiez le chemin du checkpoint dans la barre latérale.")
@@ -541,7 +585,6 @@ if not checkpoint_exists:
 checkpoint_mtime = checkpoint.stat().st_mtime
 signature = (
     source_identity,
-    selected_date,
     str(checkpoint.resolve()),
     checkpoint_mtime,
     input_channels,
@@ -623,7 +666,7 @@ with tab_parcel:
     st.download_button(
         "📥 Télécharger la segmentation complète de la parcelle (PNG)",
         data=image_png_bytes(mask_mosaic),
-        file_name="segmentation_{}.png".format(selected_date.replace(" ", "_")),
+        file_name="segmentation_{}.png".format(selected_folder_name.replace(" ", "_")),
         mime="image/png",
     )
 
@@ -694,6 +737,6 @@ with tab_scores:
     st.download_button(
         "📥 Télécharger les scores complets (CSV)",
         data=csv_data,
-        file_name="scores_{}.csv".format(selected_date.replace(" ", "_")),
+        file_name="scores_{}.csv".format(selected_folder_name.replace(" ", "_")),
         mime="text/csv",
     )

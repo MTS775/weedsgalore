@@ -2,3 +2,4 @@ streamlit>=1.49
 absl-py==1.3.0
 pillow==9.0.1
 numpy<2
+psycopg[binary]>=3.2,<4

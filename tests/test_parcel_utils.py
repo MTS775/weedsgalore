@@ -1,20 +1,82 @@
 import io
+import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 from src.parcel_utils import (
+    combine_parcels,
     index_parcel_files,
     index_zip,
     read_band,
     read_reference,
     scores_from_confusion,
 )
+from src.project_paths import list_dataset_subdirectories, resolve_project_path
 
 
 class ParcelUtilsTests(unittest.TestCase):
+    def test_combines_all_dates_from_selected_folder(self):
+        first_tile = {"bands": {"R": b"first"}, "label": None}
+        second_tile = {"bands": {"R": b"second"}, "label": None}
+
+        tiles = combine_parcels(
+            {
+                "2023-05-25": {"tile_01": first_tile},
+                "2023-05-30": {"tile_01": second_tile},
+            }
+        )
+
+        self.assertEqual(
+            tiles,
+            {
+                "2023-05-25/tile_01": first_tile,
+                "2023-05-30/tile_01": second_tile,
+            },
+        )
+
+    def test_preserves_tile_names_for_single_date(self):
+        tile = {"bands": {"R": b"red"}, "label": None}
+
+        tiles = combine_parcels({"2023-05-25": {"tile_01": tile}})
+
+        self.assertEqual(tiles, {"tile_01": tile})
+
+    def test_lists_new_direct_subdirectories_when_rescanned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing_folder = root / "2023-05-25"
+            existing_folder.mkdir()
+
+            first_scan = list_dataset_subdirectories(root)
+            new_folder = root / "nouvelle-parcelle"
+            new_folder.mkdir()
+            second_scan = list_dataset_subdirectories(root)
+
+            self.assertEqual(first_scan, [existing_folder.resolve()])
+            self.assertEqual(
+                second_scan,
+                [existing_folder.resolve(), new_folder.resolve()],
+            )
+
+    def test_resolves_relative_project_paths_from_project_root(self):
+        root = Path("C:/projects/weedsgalore")
+
+        resolved = resolve_project_path("ckpts/model.pth", root)
+
+        self.assertEqual(resolved, root / "ckpts" / "model.pth")
+
+    def test_preserves_absolute_paths_outside_project_root(self):
+        root = Path("C:/projects/weedsgalore")
+        external_path = Path("C:/baseTeste")
+
+        resolved = resolve_project_path(external_path, root)
+
+        self.assertEqual(resolved, external_path)
+
     def test_groups_bands_and_optional_label_by_date_and_tile(self):
         entries = [
             ("2023-05-25/images/2023-05-25_0109_R.png", b"r"),

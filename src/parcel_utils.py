@@ -170,3 +170,13 @@ def index_zip(archive_bytes):
             if not name.endswith("/") and name.lower().endswith(".png")
         ]
     return index_parcel_files(entries)
+
+
+def combine_parcels(parcels):
+    """Combine every date in a selected folder into one uniquely named tile map."""
+    combined = {}
+    for date, tiles in sorted(parcels.items()):
+        for tile_name, tile in sorted(tiles.items()):
+            combined_name = "{}/{}".format(date, tile_name) if len(parcels) > 1 else tile_name
+            combined[combined_name] = tile
+    return combined
