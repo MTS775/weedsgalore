@@ -205,7 +205,7 @@ def render_user_management(current_user):
         if edit_u:
             username, name, first_name, email, role_id, _, active = edit_u
             with st.container(border=True):
-                st.subheader(f"✏️ Modifier le compte : {username}")
+                st.subheader(f"Modifier le compte : {username}")
                 with st.form("user-edit-form"):
                     col1, col2 = st.columns(2)
                     with col1:
