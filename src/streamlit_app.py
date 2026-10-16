@@ -32,6 +32,11 @@ from parcel_utils import (
 )
 from project_paths import list_dataset_subdirectories, resolve_project_path
 from connexion_streamlit import render_authentication
+from gestion_authorisation import (
+    USER_MANAGEMENT_PAGE,
+    can_access_page,
+    get_accessible_pages,
+)
 from gestion_utilisateurs import render_user_management
 
 
@@ -45,15 +50,18 @@ st.set_page_config(
 current_user = render_authentication()
 if current_user is None:
     st.stop()
-if current_user["role"] == "admin":
-    selected_page = st.sidebar.radio(
-        "Navigation",
-        ["Analyse de parcelle", "Gestion des utilisateurs"],
-        key="main-navigation",
-    )
-    if selected_page == "Gestion des utilisateurs":
-        render_user_management(current_user)
+available_pages = get_accessible_pages(current_user["role"])
+selected_page = st.sidebar.radio(
+    "Navigation",
+    available_pages,
+    key="main-navigation",
+)
+if selected_page == USER_MANAGEMENT_PAGE:
+    if not can_access_page(current_user["role"], USER_MANAGEMENT_PAGE):
+        st.error("L’administration des comptes est réservée aux administrateurs.")
         st.stop()
+    render_user_management(current_user)
+    st.stop()
 
 CLASS_COLORS = np.asarray(
     [
