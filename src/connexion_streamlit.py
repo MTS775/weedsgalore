@@ -6,6 +6,7 @@ import hmac
 import base64
 import re
 import secrets
+from pathlib import Path
 
 import psycopg
 import streamlit as st
@@ -13,6 +14,7 @@ import streamlit as st
 
 PASSWORD_ITERATIONS = 600_000
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{3,50}$")
+SIDEBAR_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo-css.jpg"
 
 
 class AuthenticationConfigurationError(ValueError):
@@ -628,6 +630,7 @@ def render_authentication():
                 st.rerun()
         return None
 
+    st.sidebar.image(str(SIDEBAR_LOGO_PATH), width=220)
     st.sidebar.caption(
         "Connecté : {} ({})".format(current_user["username"], current_user["role"])
     )

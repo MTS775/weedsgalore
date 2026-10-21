@@ -1,3 +1,10 @@
+[global]
+developmentMode = false
+
+[server]
+port = 8503
+headless = true
+
 [theme]
 primaryColor = "#16803c"
 backgroundColor = "#f8fafc"
