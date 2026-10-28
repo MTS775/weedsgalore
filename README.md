@@ -86,7 +86,7 @@ On Windows, you can start the app by double-clicking `exec_weedsgalore.bat` in t
 
 Using `python -m streamlit` ensures the app runs under the active environment, where PyTorch is installed. The command above installs the CPU build; for CUDA, install the matching PyTorch/CUDA build using the [official PyTorch selector](https://pytorch.org/get-started/locally/) instead.
 
-In the sidebar, select the RGB or MSI model and matching checkpoint. By default, the app locates the dataset at `weedsgalore-dataset/` and the model at `ckpts/` relative to the project root, regardless of the current working directory or the computer's username. You can enter an absolute path to another dataset (for example `C:\baseTeste`) or model in the sidebar. Relative paths entered there are resolved from the project root.
+In the sidebar, select the RGB or MSI model and matching checkpoint. The **Composite · RGB · 3 bandes** input accepts a standalone PNG or JPEG (by default, `orthomosaique/IMG.png`) and automatically selects the RGB three-class checkpoint. Use **Importer un composite RGB** to upload an image instead. By default, the app locates the dataset at `weedsgalore-dataset/` and the model at `ckpts/` relative to the project root, regardless of the current working directory or the computer's username. You can enter an absolute path to another dataset (for example `C:\baseTeste`) or model in the sidebar. Relative paths entered there are resolved from the project root.
 
 For a local dataset, choose `Racine complète du dataset` to analyze everything below the selected path, or select a direct subfolder under `Sous-dossier à analyser`. All dates and tiles found inside the selected folder are analyzed together; there is no separate parcel/date selector.
 

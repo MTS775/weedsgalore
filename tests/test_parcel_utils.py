@@ -9,8 +9,10 @@ from PIL import Image
 
 from src.parcel_utils import (
     combine_parcels,
+    index_rgb_image,
     index_parcel_files,
     index_zip,
+    prepare_rgb_image,
     read_band,
     read_reference,
     scores_from_confusion,
@@ -114,6 +116,28 @@ class ParcelUtilsTests(unittest.TestCase):
 
         self.assertEqual(band.dtype, np.float32)
         np.testing.assert_allclose(band, [[0.0, 32768.0 / 65535.0, 1.0]])
+
+    def test_indexes_and_prepares_standalone_rgb_image(self):
+        image_buffer = io.BytesIO()
+        Image.fromarray(
+            np.asarray([[[255, 128, 0], [0, 64, 255]]], dtype=np.uint8)
+        ).save(image_buffer, format="PNG")
+
+        parcel = index_rgb_image(image_buffer.getvalue(), "IMG.png")
+        tile = parcel["Composite"]["IMG"]
+        prepared = prepare_rgb_image(tile["image"])
+
+        self.assertIsNone(prepared["label"])
+        self.assertEqual(prepared["rgb"].shape, (1, 2, 3))
+        self.assertEqual(prepared["features"].shape, (3, 1, 2))
+        np.testing.assert_allclose(
+            prepared["features"][:, 0, 0], [1.0, 128.0 / 255.0, 0.0]
+        )
+        np.testing.assert_array_equal(prepared["rgb"][0, 1], [0, 64, 255])
+
+    def test_rejects_unsupported_standalone_image_format(self):
+        with self.assertRaisesRegex(ValueError, "PNG ou JPEG"):
+            index_rgb_image(b"image", "orthomosaic.tif")
 
     def test_iou_ignores_classes_with_no_ground_truth_or_prediction(self):
         confusion = np.asarray([[3, 1, 0], [1, 2, 0], [0, 0, 0]])

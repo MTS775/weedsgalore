@@ -131,6 +131,30 @@ def prepare_tile(tile, band_names, num_classes):
     return {"features": features, "rgb": rgb, "label": label}, None
 
 
+def index_rgb_image(reference, name):
+    """Create a one-tile parcel from a standalone RGB image."""
+    extension = os.path.splitext(name)[1].lower()
+    if extension not in (".png", ".jpg", ".jpeg"):
+        raise ValueError("L’image doit être au format PNG ou JPEG.")
+
+    tile_name = os.path.splitext(os.path.basename(name))[0]
+    if not tile_name:
+        raise ValueError("Le nom de l’image est invalide.")
+    return {
+        "Composite": {
+            tile_name: {"bands": {}, "label": None, "image": reference}
+        }
+    }
+
+
+def prepare_rgb_image(reference):
+    """Decode a standalone RGB image into model features and a display image."""
+    with Image.open(io.BytesIO(read_reference(reference))) as image:
+        rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    features = np.transpose(rgb.astype(np.float32) / np.float32(255.0), (2, 0, 1))
+    return {"features": features, "rgb": rgb, "label": None}
+
+
 def update_confusion(confusion, prediction, label, num_classes):
     valid = (label >= 0) & (label < num_classes)
     if not np.any(valid):

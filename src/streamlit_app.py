@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import csv
+import hashlib
 import io
 import os
 import sys
@@ -25,7 +26,9 @@ from parcel_utils import (
     combine_parcels,
     index_directory,
     index_parcel_files,
+    index_rgb_image,
     index_zip,
+    prepare_rgb_image,
     prepare_tile,
     scores_from_confusion,
     update_confusion,
@@ -245,6 +248,11 @@ st.markdown(
         -webkit-text-fill-color: __TEXT_COLOR__ !important;
         caret-color: __TEXT_COLOR__ !important;
     }
+    [data-testid="stSidebar"] .st-key-orthomosaic-image-path input {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        caret-color: #000000 !important;
+    }
     </style>
     """.replace("__TEXT_COLOR__", input_text_color),
     unsafe_allow_html=True,
@@ -311,7 +319,10 @@ def infer_parcel(model, device, parcel, band_names, num_classes, progress_bar, s
     total_tiles = len(tiles)
 
     for index, (tile_name, tile) in enumerate(tiles):
-        prepared, error = prepare_tile(tile, band_names, num_classes)
+        if "image" in tile:
+            prepared, error = prepare_rgb_image(tile["image"]), None
+        else:
+            prepared, error = prepare_tile(tile, band_names, num_classes)
         pct = int(((index + 1) / total_tiles) * 100)
         
         if error:
@@ -446,11 +457,19 @@ def make_metrics_csv(results, names):
 
 # --- BARRE LATÉRALE ---
 st.sidebar.markdown("## ⚙️ Paramètres du Modèle")
-input_option = st.sidebar.radio("🛰️ Entrée du modèle", ["MSI · 5 bandes", "RGB · 3 bandes"])
+input_option = st.sidebar.radio(
+    "🛰️ Entrée du modèle",
+    ["MSI · 5 bandes", "RGB · 3 bandes", "Composite · RGB · 3 bandes"],
+)
+orthomosaic_mode = input_option.startswith("Composite")
 input_channels = 5 if input_option.startswith("MSI") else 3
 band_names = ["R", "G", "B", "NIR", "RE"] if input_channels == 5 else ["R", "G", "B"]
-class_option = st.sidebar.radio("🏷️ Classes prédites", ["Multi-classes · 6", "Adventices · 3"])
-num_classes = 6 if class_option.endswith("6") else 3
+if orthomosaic_mode:
+    num_classes = 3
+    st.sidebar.caption("Le modèle RGB · 3 classes est sélectionné automatiquement.")
+else:
+    class_option = st.sidebar.radio("🏷️ Classes prédites", ["Multi-classes · 6", "Adventices · 3"])
+    num_classes = 6 if class_option.endswith("6") else 3
 checkpoint_variant = "msi" if input_channels == 5 else "rgb"
 checkpoint_default = resolve_project_path(
     os.environ.get(
@@ -475,12 +494,50 @@ grid_columns = st.sidebar.slider(
 )
 
 st.sidebar.markdown("---")
-source_mode = st.sidebar.radio("📂 Source des images", ["Dossier local", "Téléverser un dossier / ZIP"])
+source_options = (
+    ["Image locale", "Importer une image"]
+    if orthomosaic_mode
+    else ["Dossier local", "Téléverser un dossier / ZIP"]
+)
+source_mode = st.sidebar.radio("📂 Source des images", source_options)
 parcels = {}
 ignored_files = []
 source_identity = ""
 
-if source_mode == "Dossier local":
+if orthomosaic_mode and source_mode == "Image locale":
+    image_path = st.sidebar.text_input(
+        "📁 Chemin du composite",
+        value=str(PROJECT_ROOT / "orthomosaique" / "IMG.png"),
+        help="Sélectionnez une image PNG ou JPEG sur la machine qui exécute Streamlit.",
+        key="orthomosaic-image-path",
+    )
+    local_image = resolve_project_path(image_path, PROJECT_ROOT)
+    if local_image.is_file():
+        if local_image.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            st.sidebar.error("L’image doit être au format PNG ou JPEG.")
+        else:
+            parcels = index_rgb_image(str(local_image), local_image.name)
+            image_stat = local_image.stat()
+            source_identity = "{}:{}:{}".format(
+                local_image.resolve(), image_stat.st_size, image_stat.st_mtime_ns
+            )
+    else:
+        st.info("Saisissez le chemin d’une image PNG ou JPEG existante.")
+elif orthomosaic_mode:
+    uploaded_image = st.sidebar.file_uploader(
+        "Importer un composite RGB",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=False,
+        key="orthomosaic-image-upload",
+        help="L’image importée sera prédite avec le modèle RGB à 3 classes.",
+    )
+    if uploaded_image:
+        image_bytes = uploaded_image.getvalue()
+        parcels = index_rgb_image(image_bytes, uploaded_image.name)
+        source_identity = "{}:{}".format(
+            uploaded_image.name, hashlib.sha256(image_bytes).hexdigest()
+        )
+elif source_mode == "Dossier local":
     dataset_default = resolve_project_path(
         os.environ.get("WEEDSGALORE_DATASET", PROJECT_ROOT / "weedsgalore-dataset"),
         PROJECT_ROOT,
@@ -557,33 +614,53 @@ if ignored_files:
     st.sidebar.caption("⚠️ {} fichier(s) ignoré(s) (nom de bande non reconnu).".format(len(ignored_files)))
 
 if not parcels:
-    st.markdown(
-        '<div class="hint">🌱 Chargez un dossier WeedsGalore contenant des tuiles nommées '
-        '<code>date_tuile_R.png</code>, <code>_G.png</code>, <code>_B.png</code>, '
-        '<code>_NIR.png</code> et <code>_RE.png</code> pour MSI. '
-        'Les masques facultatifs doivent être sous <code>semantics/</code>.</div>',
-        unsafe_allow_html=True,
-    )
+    if orthomosaic_mode:
+        st.markdown(
+            '<div class="hint">🛰️ Sélectionnez une image de composite RGB au format '
+            'PNG ou JPEG pour lancer la prédiction avec le modèle RGB à 3 classes.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="hint">🌱 Chargez un dossier WeedsGalore contenant des tuiles nommées '
+            '<code>date_tuile_R.png</code>, <code>_G.png</code>, <code>_B.png</code>, '
+            '<code>_NIR.png</code> et <code>_RE.png</code> pour MSI. '
+            'Les masques facultatifs doivent être sous <code>semantics/</code>.</div>',
+            unsafe_allow_html=True,
+        )
     st.stop()
 
 parcel = combine_parcels(parcels)
-selected_folder_name = Path(source_identity).name or "dataset"
+selected_folder_name = (
+    "composite" if orthomosaic_mode else Path(source_identity).name or "dataset"
+)
 
-available_tiles = sum(
-    all(band in tile["bands"] for band in band_names) for tile in parcel.values()
+available_tiles = (
+    len(parcel)
+    if orthomosaic_mode
+    else sum(all(band in tile["bands"] for band in band_names) for tile in parcel.values())
 )
 st.sidebar.caption(
-    "📊 {} tuile(s) indexée(s), {} complète(s) pour {}.".format(
+    "📊 {} image(s) prête(s) pour {}.".format(len(parcel), input_option)
+    if orthomosaic_mode
+    else "📊 {} tuile(s) indexée(s), {} complète(s) pour {}.".format(
         len(parcel), available_tiles, input_option
     )
 )
 
-st.markdown(
-    '<div class="hint"><strong>Assemblage visuel de la parcelle :</strong> Les tuiles sont rangées par identifiant '
-    'dans une grille interactive. Le jeu fourni ne contient pas de coordonnées spatiales pour ces tuiles ; '
-    'la grille n’est donc pas une mosaïque géoréférencée exacte.</div>',
-    unsafe_allow_html=True,
-)
+if orthomosaic_mode:
+    st.markdown(
+        '<div class="hint"><strong>Prédiction du composite :</strong> l’image RGB complète '
+        'est transmise au modèle à 3 classes.</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        '<div class="hint"><strong>Assemblage visuel de la parcelle :</strong> Les tuiles sont rangées par identifiant '
+        'dans une grille interactive. Le jeu fourni ne contient pas de coordonnées spatiales pour ces tuiles ; '
+        'la grille n’est donc pas une mosaïque géoréférencée exacte.</div>',
+        unsafe_allow_html=True,
+    )
 
 checkpoint = resolve_project_path(checkpoint_path, PROJECT_ROOT)
 checkpoint_exists = checkpoint.is_file()
@@ -639,10 +716,10 @@ mean_iou = result["mean_iou"]
 
 # Affichage des métriques globales
 col_a, col_b, col_c = st.columns(3)
-col_a.metric("🛰️ Tuiles segmentées", len(result["tiles"]))
-col_b.metric("🎯 Confiance moyenne", "{:.1f} %".format(result["confidence"] * 100))
+col_a.metric("Tuiles segmentées", len(result["tiles"]))
+col_b.metric("Confiance moyenne", "{:.1f} %".format(result["confidence"] * 100))
 col_c.metric(
-    "📈 mIoU global",
+    "mIoU global",
     "{:.1f} %".format(mean_iou * 100) if has_annotations and np.isfinite(mean_iou) else "N/D",
     help="Calculée uniquement sur les pixels annotés disponibles.",
 )
@@ -679,7 +756,7 @@ with tab_parcel:
     )
 
 with tab_tile:
-    selected_tile_name = st.selectbox("🔎 Sélectionner une tuile spécifique", [tile["name"] for tile in result["tiles"]])
+    selected_tile_name = st.selectbox("Sélectionner une tuile spécifique", [tile["name"] for tile in result["tiles"]])
     selected_tile = next(tile for tile in result["tiles"] if tile["name"] == selected_tile_name)
     opacity = st.slider("✨ Opacité de la segmentation (Tuile)", 0.0, 1.0, 0.55, 0.05)
     colors = CLASS_COLORS[selected_tile["prediction"]]
