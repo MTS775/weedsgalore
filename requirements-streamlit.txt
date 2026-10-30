@@ -1,4 +1,5 @@
 streamlit>=1.49
+extra-streamlit-components>=0.1.71,<0.2
 absl-py==1.3.0
 pillow==9.0.1
 numpy<2

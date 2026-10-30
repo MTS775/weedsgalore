@@ -9,7 +9,9 @@ from PIL import Image
 
 from src.parcel_utils import (
     combine_parcels,
+    index_rgb_directory,
     index_rgb_image,
+    index_rgb_images,
     index_parcel_files,
     index_zip,
     prepare_rgb_image,
@@ -138,6 +140,42 @@ class ParcelUtilsTests(unittest.TestCase):
     def test_rejects_unsupported_standalone_image_format(self):
         with self.assertRaisesRegex(ValueError, "PNG ou JPEG"):
             index_rgb_image(b"image", "orthomosaic.tif")
+
+    def test_indexes_multiple_rgb_composites_and_preserves_subfolder_names(self):
+        image_buffer = io.BytesIO()
+        Image.fromarray(np.full((2, 2, 3), 127, dtype=np.uint8)).save(
+            image_buffer, format="PNG"
+        )
+
+        parcel = index_rgb_images(
+            [
+                ("date-a/IMG.png", image_buffer.getvalue()),
+                ("date-b/IMG.jpg", image_buffer.getvalue()),
+                ("date-a/IMG.jpg", image_buffer.getvalue()),
+            ]
+        )
+
+        self.assertEqual(
+            set(parcel["Composite"]),
+            {"date-a/IMG", "date-b/IMG", "date-a/IMG (jpg)"},
+        )
+        self.assertEqual(len(parcel["Composite"]), 3)
+
+    def test_indexes_composite_directory_recursively_and_skips_band_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "date-1"
+            nested.mkdir()
+            image = np.full((2, 2, 3), 127, dtype=np.uint8)
+            Image.fromarray(image).save(root / "IMG.png")
+            Image.fromarray(image).save(nested / "IMG.png")
+            Image.fromarray(image).save(root / "bande_R_rouge.png")
+
+            parcel = index_rgb_directory(root)
+
+        self.assertEqual(
+            set(parcel["Composite"]), {"IMG", "date-1/IMG"}
+        )
 
     def test_iou_ignores_classes_with_no_ground_truth_or_prediction(self):
         confusion = np.asarray([[3, 1, 0], [1, 2, 0], [0, 0, 0]])

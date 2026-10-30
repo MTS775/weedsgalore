@@ -26,7 +26,8 @@ from parcel_utils import (
     combine_parcels,
     index_directory,
     index_parcel_files,
-    index_rgb_image,
+    index_rgb_directory,
+    index_rgb_images,
     index_zip,
     prepare_rgb_image,
     prepare_tile,
@@ -238,7 +239,8 @@ st.markdown(
     <style>
     [data-testid="stSidebar"] .st-key-checkpoint-path input,
     [data-testid="stSidebar"] .st-key-dataset-path input,
-    [data-testid="stSidebar"] .st-key-dataset-subfolder input[role="combobox"] {
+    [data-testid="stSidebar"] .st-key-dataset-subfolder input[role="combobox"],
+    [data-testid="stSidebar"] .st-key-composite-subfolder input[role="combobox"] {
         color: __TEXT_COLOR__ !important;
         -webkit-text-fill-color: __TEXT_COLOR__ !important;
         caret-color: __TEXT_COLOR__ !important;
@@ -249,6 +251,11 @@ st.markdown(
         caret-color: __TEXT_COLOR__ !important;
     }
     [data-testid="stSidebar"] .st-key-orthomosaic-image-path input {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        caret-color: #000000 !important;
+    }
+    [data-testid="stSidebar"] .st-key-composite-directory-path input {
         color: #000000 !important;
         -webkit-text-fill-color: #000000 !important;
         caret-color: #000000 !important;
@@ -495,7 +502,7 @@ grid_columns = st.sidebar.slider(
 
 st.sidebar.markdown("---")
 source_options = (
-    ["Image locale", "Importer une image"]
+    ["Dossier local", "Importer des images"]
     if orthomosaic_mode
     else ["Dossier local", "Téléverser un dossier / ZIP"]
 )
@@ -504,38 +511,63 @@ parcels = {}
 ignored_files = []
 source_identity = ""
 
-if orthomosaic_mode and source_mode == "Image locale":
-    image_path = st.sidebar.text_input(
-        "📁 Chemin du composite",
-        value=str(PROJECT_ROOT / "orthomosaique" / "IMG.png"),
-        help="Sélectionnez une image PNG ou JPEG sur la machine qui exécute Streamlit.",
-        key="orthomosaic-image-path",
+if orthomosaic_mode and source_mode == "Dossier local":
+    composite_default = resolve_project_path(
+        PROJECT_ROOT / "orthomosaique", PROJECT_ROOT
     )
-    local_image = resolve_project_path(image_path, PROJECT_ROOT)
-    if local_image.is_file():
-        if local_image.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-            st.sidebar.error("L’image doit être au format PNG ou JPEG.")
-        else:
-            parcels = index_rgb_image(str(local_image), local_image.name)
-            image_stat = local_image.stat()
-            source_identity = "{}:{}:{}".format(
-                local_image.resolve(), image_stat.st_size, image_stat.st_mtime_ns
-            )
-    else:
-        st.info("Saisissez le chemin d’une image PNG ou JPEG existante.")
-elif orthomosaic_mode:
-    uploaded_image = st.sidebar.file_uploader(
-        "Importer un composite RGB",
-        type=["png", "jpg", "jpeg"],
-        accept_multiple_files=False,
-        key="orthomosaic-image-upload",
-        help="L’image importée sera prédite avec le modèle RGB à 3 classes.",
+    composite_path = st.sidebar.text_input(
+        "📂 Chemin du dossier de composites",
+        value=str(composite_default),
+        help="Toutes les images PNG/JPEG du dossier sélectionné et de ses sous-dossiers seront analysées.",
+        key="composite-directory-path",
     )
-    if uploaded_image:
-        image_bytes = uploaded_image.getvalue()
-        parcels = index_rgb_image(image_bytes, uploaded_image.name)
+    composite_root = resolve_project_path(composite_path, PROJECT_ROOT)
+    if composite_root.is_dir():
+        composite_folders = [str(composite_root)] + [
+            str(path) for path in list_dataset_subdirectories(composite_root)
+        ]
+        if st.session_state.get("composite-subfolder") not in composite_folders:
+            st.session_state["composite-subfolder"] = composite_folders[0]
+        selected_composite_folder = st.sidebar.selectbox(
+            "📁 Sélectionner le sous-dossier",
+            options=composite_folders,
+            format_func=lambda path: (
+                "Racine complète du dataset"
+                if Path(path) == composite_root
+                else str(Path(path).relative_to(composite_root))
+            ),
+            key="composite-subfolder",
+            help="Choisissez la racine ou un sous-dossier de composites à analyser.",
+        )
+        selected_composite_root = Path(selected_composite_folder)
+        parcels = index_rgb_directory(str(selected_composite_root))
         source_identity = "{}:{}".format(
-            uploaded_image.name, hashlib.sha256(image_bytes).hexdigest()
+            selected_composite_root.resolve(),
+            tuple(
+                (name, Path(tile["image"]).stat().st_size, Path(tile["image"]).stat().st_mtime_ns)
+                for name, tile in sorted(parcels.get("Composite", {}).items())
+            ),
+        )
+    else:
+        st.info("Saisissez le chemin d’un dossier de composites existant.")
+elif orthomosaic_mode:
+    uploaded_images = st.sidebar.file_uploader(
+        "Importer un ou plusieurs composites RGB",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="composite-image-upload",
+        help="Chaque image sélectionnée sera prédite avec le modèle RGB à 3 classes.",
+    )
+    if uploaded_images:
+        image_entries = [
+            (image.name, image.getvalue()) for image in uploaded_images
+        ]
+        parcels = index_rgb_images(image_entries)
+        source_identity = "|".join(
+            "{}:{}".format(
+                image.name, hashlib.sha256(image.getvalue()).hexdigest()
+            )
+            for image in uploaded_images
         )
 elif source_mode == "Dossier local":
     dataset_default = resolve_project_path(
@@ -616,8 +648,9 @@ if ignored_files:
 if not parcels:
     if orthomosaic_mode:
         st.markdown(
-            '<div class="hint">🛰️ Sélectionnez une image de composite RGB au format '
-            'PNG ou JPEG pour lancer la prédiction avec le modèle RGB à 3 classes.</div>',
+            '<div class="hint">🛰️ Sélectionnez un dossier contenant des composites RGB ou '
+            'importez une ou plusieurs images PNG/JPEG. Chaque image sera prédite avec le '
+            'modèle RGB à 3 classes.</div>',
             unsafe_allow_html=True,
         )
     else:
@@ -650,8 +683,8 @@ st.sidebar.caption(
 
 if orthomosaic_mode:
     st.markdown(
-        '<div class="hint"><strong>Prédiction du composite :</strong> l’image RGB complète '
-        'est transmise au modèle à 3 classes.</div>',
+        '<div class="hint"><strong>Prédiction des composites :</strong> chaque image RGB '
+        'sélectionnée est transmise au modèle à 3 classes.</div>',
         unsafe_allow_html=True,
     )
 else:

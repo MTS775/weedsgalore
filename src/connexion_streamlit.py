@@ -6,10 +6,28 @@ import hmac
 import base64
 import re
 import secrets
+import time
 from pathlib import Path
 
 import psycopg
 import streamlit as st
+
+if __package__:
+    from .auth_session import (
+        SESSION_COOKIE_NAME,
+        clear_session_cookie,
+        create_cookie_manager,
+        load_session_cookie,
+        save_session_cookie,
+    )
+else:
+    from auth_session import (
+        SESSION_COOKIE_NAME,
+        clear_session_cookie,
+        create_cookie_manager,
+        load_session_cookie,
+        save_session_cookie,
+    )
 
 
 PASSWORD_ITERATIONS = 600_000
@@ -528,21 +546,58 @@ def render_authentication():
             return None
         st.session_state["_auth_schema_version"] = 4
 
+    session_secret = database_settings["password"]
     current_user = st.session_state.get("authenticated_user")
+    logout_in_progress = st.session_state.get("_auth_logged_out", False)
+    restored_from_cookie = False
+    session_expires_at = st.session_state.get("authenticated_user_expires_at")
+    if current_user is not None and (
+        not isinstance(session_expires_at, int) or session_expires_at <= int(time.time())
+    ):
+        st.session_state.pop("authenticated_user", None)
+        st.session_state.pop("authenticated_user_expires_at", None)
+        current_user = None
+
+    if current_user is None and not logout_in_progress:
+        cookie_token = st.context.cookies.get(SESSION_COOKIE_NAME)
+        persistent_session = load_session_cookie(cookie_token, session_secret)
+        if persistent_session is not None:
+            username, expires_at = persistent_session
+            try:
+                current_user = get_authenticated_user(database_settings, username)
+            except psycopg.Error:
+                st.title("Connexion à WeedsGalore")
+                st.error("Impossible de vérifier l’état du compte dans PostgreSQL.")
+                return None
+            if current_user is None:
+                cookie_manager = create_cookie_manager()
+                clear_session_cookie(cookie_manager)
+                st.session_state["_auth_logged_out"] = True
+                st.warning("Ce compte est désactivé ou n’existe plus. Veuillez vous reconnecter.")
+            else:
+                st.session_state["authenticated_user"] = current_user
+                st.session_state["authenticated_user_expires_at"] = expires_at
+                restored_from_cookie = True
+
     if current_user is not None:
-        try:
-            current_user = get_authenticated_user(
-                database_settings,
-                current_user.get("username", current_user.get("login", "")),
-            )
-        except psycopg.Error:
-            st.title("Connexion à WeedsGalore")
-            st.error("Impossible de vérifier l’état du compte dans PostgreSQL.")
-            return None
-        if current_user is None:
-            st.session_state.pop("authenticated_user", None)
-            st.warning("Ce compte est désactivé ou n’existe plus. Veuillez vous reconnecter.")
-            return None
+        cookie_manager = create_cookie_manager()
+        if not restored_from_cookie:
+            try:
+                current_user = get_authenticated_user(
+                    database_settings,
+                    current_user.get("username", current_user.get("login", "")),
+                )
+            except psycopg.Error:
+                st.title("Connexion à WeedsGalore")
+                st.error("Impossible de vérifier l’état du compte dans PostgreSQL.")
+                return None
+            if current_user is None:
+                st.session_state.pop("authenticated_user", None)
+                st.session_state.pop("authenticated_user_expires_at", None)
+                st.session_state["_auth_logged_out"] = True
+                clear_session_cookie(cookie_manager)
+                st.warning("Ce compte est désactivé ou n’existe plus. Veuillez vous reconnecter.")
+                return None
         st.session_state["authenticated_user"] = current_user
 
     if current_user is None:
@@ -627,6 +682,15 @@ def render_authentication():
                     st.error("Username ou mot de passe incorrect.")
                     return None
                 st.session_state["authenticated_user"] = current_user
+                st.session_state.pop("_auth_logged_out", None)
+                cookie_manager = create_cookie_manager()
+                expires_at = save_session_cookie(
+                    cookie_manager,
+                    current_user["username"],
+                    session_secret,
+                    secure=(st.context.url or "").startswith("https://"),
+                )
+                st.session_state["authenticated_user_expires_at"] = expires_at
                 st.rerun()
         return None
 
@@ -636,5 +700,8 @@ def render_authentication():
     )
     if st.sidebar.button("Se déconnecter", key="logout"):
         st.session_state.pop("authenticated_user", None)
+        st.session_state.pop("authenticated_user_expires_at", None)
+        st.session_state["_auth_logged_out"] = True
+        clear_session_cookie(cookie_manager)
         st.rerun()
     return current_user

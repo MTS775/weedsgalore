@@ -5,6 +5,7 @@ import io
 import os
 import re
 import zipfile
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -133,18 +134,51 @@ def prepare_tile(tile, band_names, num_classes):
 
 def index_rgb_image(reference, name):
     """Create a one-tile parcel from a standalone RGB image."""
-    extension = os.path.splitext(name)[1].lower()
-    if extension not in (".png", ".jpg", ".jpeg"):
+    if os.path.splitext(name)[1].lower() not in (".png", ".jpg", ".jpeg"):
         raise ValueError("L’image doit être au format PNG ou JPEG.")
+    return index_rgb_images([(name, reference)])
 
-    tile_name = os.path.splitext(os.path.basename(name))[0]
-    if not tile_name:
-        raise ValueError("Le nom de l’image est invalide.")
-    return {
-        "Composite": {
-            tile_name: {"bands": {}, "label": None, "image": reference}
-        }
-    }
+
+def index_rgb_images(entries):
+    """Create one composite parcel from multiple standalone RGB images."""
+    tiles = {}
+    for name, reference in entries:
+        normalized = name.replace("\\", "/")
+        stem, extension = os.path.splitext(normalized)
+        if extension.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        if Path(stem).name.casefold().startswith(("band_", "bande_")):
+            continue
+
+        base_name = stem.strip("/")
+        if not base_name:
+            raise ValueError("Le nom d’une image est invalide.")
+        tile_name = base_name
+        if tile_name in tiles:
+            tile_name = "{} ({})".format(base_name, extension[1:].lower())
+            duplicate_index = 2
+            while tile_name in tiles:
+                tile_name = "{} ({})".format(
+                    base_name, duplicate_index
+                )
+                duplicate_index += 1
+        tiles[tile_name] = {"bands": {}, "label": None, "image": reference}
+
+    return {"Composite": tiles} if tiles else {}
+
+
+def index_rgb_directory(root):
+    """Index RGB images recursively, excluding individual spectral-band files."""
+    entries = []
+    for directory, _, filenames in os.walk(root):
+        for filename in filenames:
+            if Path(filename).suffix.lower() not in (".png", ".jpg", ".jpeg"):
+                continue
+            if Path(filename).stem.casefold().startswith(("band_", "bande_")):
+                continue
+            path = os.path.join(directory, filename)
+            entries.append((os.path.relpath(path, root), path))
+    return index_rgb_images(sorted(entries))
 
 
 def prepare_rgb_image(reference):
