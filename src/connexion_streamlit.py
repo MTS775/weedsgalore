@@ -703,5 +703,5 @@ def render_authentication():
         st.session_state.pop("authenticated_user_expires_at", None)
         st.session_state["_auth_logged_out"] = True
         clear_session_cookie(cookie_manager)
-        st.rerun()
+        return None
     return current_user
