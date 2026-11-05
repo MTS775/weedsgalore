@@ -691,7 +691,7 @@ def render_authentication():
                     secure=(st.context.url or "").startswith("https://"),
                 )
                 st.session_state["authenticated_user_expires_at"] = expires_at
-                st.rerun()
+                return current_user
         return None
 
     st.sidebar.image(str(SIDEBAR_LOGO_PATH), width=220)
